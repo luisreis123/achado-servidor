@@ -61,6 +61,14 @@ def inicializar():
             )
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_historico_hash ON historico_precos(hash_imovel)")
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS geocoding_cache (
+                endereco TEXT PRIMARY KEY,
+                latitude REAL,
+                longitude REAL,
+                obtido_em INTEGER NOT NULL
+            )
+        """)
 
 
 # --- Alertas (pesquisas guardadas) ---
@@ -134,3 +142,22 @@ def obter_historico(hash_imovel: str) -> list[dict]:
             (hash_imovel,),
         ).fetchall()
         return [dict(l) for l in linhas]
+
+
+# --- Cache de geocoding (morada -> coordenadas) ---
+
+def obter_coordenadas_cache(endereco: str) -> tuple[float, float] | None:
+    with ligar() as conn:
+        linha = conn.execute(
+            "SELECT latitude, longitude FROM geocoding_cache WHERE endereco = ?",
+            (endereco,),
+        ).fetchone()
+        return (linha["latitude"], linha["longitude"]) if linha else None
+
+
+def guardar_coordenadas_cache(endereco: str, latitude: float | None, longitude: float | None):
+    with ligar() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO geocoding_cache (endereco, latitude, longitude, obtido_em) VALUES (?, ?, ?, ?)",
+            (endereco, latitude, longitude, int(time.time())),
+        )

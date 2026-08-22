@@ -34,6 +34,7 @@ from pydantic import BaseModel
 
 import db
 import email_alertas
+import geocoding
 from adaptador_json_ld import buscar_via_json_ld
 from adaptador_imovirtual import buscar_imovirtual
 
@@ -253,6 +254,11 @@ async def executar_pesquisa(cidade: str, tipos_lista: list[str], operacao: str, 
         todos_items.extend(resultado)
 
     agrupados = _agrupar_duplicados(todos_items)
+
+    # Converte as moradas em coordenadas para os pinos no mapa
+    # (usa cache — só faz pedidos novos ao Nominatim para moradas nunca vistas)
+    async with httpx.AsyncClient() as cliente_geocoding:
+        await geocoding.geocodificar_resultados(cliente_geocoding, agrupados)
 
     # Regista o preço de cada resultado no histórico (só grava se mudou desde a última vez)
     for item in agrupados:

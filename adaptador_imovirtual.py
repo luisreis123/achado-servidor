@@ -158,6 +158,19 @@ def extrair_imoveis_da_pagina_de_resultados(html: str, tipo: str, operacao: str)
             except ValueError:
                 area_m2 = None
 
+        # Foto: a imagem mais próxima ANTES do link do título (a ordem
+        # observada no site é sempre: imagens do carrossel -> preço -> título)
+        thumbnail_url = None
+        imgs_antes = a.find_all_previous("img", limit=6)
+        for img in imgs_antes:
+            candidato = img.get("src") or img.get("data-src")
+            if not candidato and img.get("srcset"):
+                # srcset tem o formato "url1 1x, url2 2x" — usar a primeira
+                candidato = img.get("srcset").split(",")[0].strip().split(" ")[0]
+            if candidato and candidato.startswith("http"):
+                thumbnail_url = candidato
+                break
+
         # Morada: primeira linha a seguir ao link que não faça parte do
         # próprio título (o primeiro nó de texto "depois" pode ainda ser
         # um fragmento do título, se este estiver dividido em <span>s)
@@ -183,7 +196,7 @@ def extrair_imoveis_da_pagina_de_resultados(html: str, tipo: str, operacao: str)
             "area_m2": area_m2,
             "quartos": quartos,
             "local": local,
-            "thumbnail_url": None,
+            "thumbnail_url": thumbnail_url,
             "tipo": tipo,
             "operacao": operacao,
         })
