@@ -57,11 +57,11 @@ MAPA_TIPO = {
 
 PADRAO_LINK_ANUNCIO = re.compile(r'/pt/anuncio/[a-z0-9\-]+-ID[A-Za-z0-9]+')
 
-# Padrões de extração, confirmados contra uma página real do Imovirtual
-PADRAO_PRECO = re.compile(r'(\d[\d\s]{2,}\d)\s?€(?!/m)')
-PADRAO_AREA = re.compile(r'Área:\s*\n+\s*([\d,.]+)\s*m²')
-PADRAO_TIPOLOGIA = re.compile(r'Tipologia:\s*\n+\s*(\S+)')
-PADRAO_WC = re.compile(r'casas de banho:\s*\n+\s*(\d+)')
+# Padrões de extração — mais tolerantes a espaços/quebras de linha entre elementos
+PADRAO_PRECO = re.compile(r'(\d[\d\s\.]{2,}\d)\s*€(?!\s*/\s*m)')
+PADRAO_AREA = re.compile(r'Área[^:]*:\s*\n*\s*([\d,.]+)\s*m²')
+PADRAO_TIPOLOGIA = re.compile(r'Tipologia:\s*\n*\s*(\S+)')
+PADRAO_WC = re.compile(r'casas de banho:\s*\n*\s*(\d+)')
 PADRAO_LOCAL_META = re.compile(r' em (.+?), por ')
 
 
@@ -94,6 +94,12 @@ def extrair_dados_anuncio(html: str, url_anuncio: str, fonte: str, tipo: str, op
     h1 = soup.find("h1")
     titulo = h1.get_text(strip=True) if h1 else None
 
+    meta_titulo_tag = soup.find("meta", attrs={"property": "og:title"})
+    if not titulo and meta_titulo_tag:
+        # Reserva: og:title costuma ter o formato "Título - endereço - ID • site"
+        bruto = meta_titulo_tag.get("content", "")
+        titulo = bruto.split(" • ")[0].strip() or None
+
     meta_desc_tag = soup.find("meta", attrs={"property": "og:description"}) or soup.find("meta", attrs={"name": "description"})
     meta_desc = meta_desc_tag.get("content", "") if meta_desc_tag else ""
 
@@ -106,9 +112,18 @@ def extrair_dados_anuncio(html: str, url_anuncio: str, fonte: str, tipo: str, op
     preco = None
     if precos:
         try:
-            preco = float(precos[0].replace(" ", ""))
+            preco = float(precos[0].replace(" ", "").replace(".", ""))
         except ValueError:
             preco = None
+
+    # Reserva: se não encontrou o preço no corpo da página, tenta na meta description
+    if preco is None:
+        precos_meta = PADRAO_PRECO.findall(meta_desc)
+        if precos_meta:
+            try:
+                preco = float(precos_meta[0].replace(" ", "").replace(".", ""))
+            except ValueError:
+                preco = None
 
     m_area = PADRAO_AREA.search(texto)
     area_m2 = None
@@ -125,8 +140,14 @@ def extrair_dados_anuncio(html: str, url_anuncio: str, fonte: str, tipo: str, op
     local = m_local.group(1) if m_local else None
 
     if not titulo or preco is None:
-        # Sem título ou sem preço, não vale a pena devolver — provavelmente
-        # a estrutura da página mudou e os padrões precisam de ajuste.
+        # DIAGNÓSTICO: mostra uma amostra do texto real da página, para
+        # ajustar os padrões com precisão da próxima vez, em vez de adivinhar.
+        amostra = texto.strip()[:600].replace("\n", " | ")
+        logger.warning(
+            f"[imovirtual] falha a extrair {url_anuncio} "
+            f"(titulo={'ok' if titulo else 'FALTA'}, preco={'ok' if preco is not None else 'FALTA'}). "
+            f"Amostra do texto: {amostra}"
+        )
         return None
 
     return {
