@@ -376,12 +376,12 @@ async def verificar_todos_os_alertas():
 async def depurar_imovirtual(cidade: str = Query("Lisboa"), tipo: str = Query("apartamento")):
     """
     ENDPOINT TEMPORÁRIO DE DIAGNÓSTICO — não faz parte da app final.
-    Vai buscar a página real do Imovirtual e devolve informação sobre o
-    que o servidor efetivamente recebeu, para perceber porque a extração
-    normal está a falhar (sem isto, estávamos só a adivinhar).
+    Vai buscar a página real do Imovirtual, corre a extração a sério, e
+    devolve informação detalhada sobre o que aconteceu em cada etapa.
     """
-    from adaptador_imovirtual import construir_url_pesquisa, PADRAO_LINK_ANUNCIO
+    from adaptador_imovirtual import construir_url_pesquisa, PADRAO_LINK_ANUNCIO, extrair_imoveis_da_pagina_de_resultados
     from bs4 import BeautifulSoup
+    import re as re_mod
 
     url = construir_url_pesquisa(cidade, tipo, "venda")
 
@@ -396,17 +396,45 @@ async def depurar_imovirtual(cidade: str = Query("Lisboa"), tipo: str = Query("a
     texto_lower = html.lower()
     sinais_de_bloqueio = [p for p in palavras_suspeitas if p in texto_lower]
 
+    # --- Testar a extração real ---
+    resultados_extraidos = extrair_imoveis_da_pagina_de_resultados(html, tipo, "venda")
+
+    # --- Diagnóstico detalhado dos primeiros 3 links COM texto (título) ---
+    detalhes_anchors = []
+    vistos = set()
+    for a in anchors:
+        titulo = a.get_text(separator=" ", strip=True)
+        titulo = re_mod.sub(r"\s+", " ", titulo).strip()
+        href = a.get("href", "")
+        if not titulo or href in vistos:
+            continue
+        vistos.add(href)
+
+        strings_antes = a.find_all_previous(string=True, limit=40)
+        texto_antes = "\n".join(reversed([s.strip() for s in strings_antes if s and s.strip()]))
+        strings_depois = a.find_all_next(string=True, limit=40)
+        texto_depois = "\n".join([s.strip() for s in strings_depois if s and s.strip()])
+
+        detalhes_anchors.append({
+            "titulo_extraido": titulo,
+            "href": href,
+            "html_bruto_do_link": str(a)[:400],
+            "ultimos_150_chars_antes_do_link": texto_antes[-150:],
+            "primeiros_300_chars_depois_do_link": texto_depois[:300],
+        })
+
+        if len(detalhes_anchors) >= 3:
+            break
+
     return {
-        "url_pedido": url,
         "status_code": resposta.status_code,
-        "url_final_apos_redirects": str(resposta.url),
         "tamanho_html_bytes": len(html),
-        "titulo_da_pagina": soup.find("title").get_text() if soup.find("title") else None,
         "num_links_de_anuncio_encontrados": len(anchors),
         "contem_texto_tipologia": "Tipologia" in html,
         "contem_texto_preco_por_m2": "Preço por metro quadrado" in html,
         "possiveis_sinais_de_bloqueio": sinais_de_bloqueio,
-        "amostra_primeiros_1500_caracteres_do_texto": soup.get_text(separator=" ", strip=True)[:1500],
+        "num_imoveis_extraidos_com_sucesso": len(resultados_extraidos),
+        "primeiros_3_links_com_titulo_detalhados": detalhes_anchors,
     }
 
 
