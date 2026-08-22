@@ -116,12 +116,26 @@ def extrair_imoveis_da_pagina_de_resultados(html: str, tipo: str, operacao: str)
         hrefs_vistos.add(href)
 
         # Nós de texto reais antes/depois do link, na ordem do documento
-        # (mais próximos do link primeiro, por isso invertemos "antes")
-        strings_antes = a.find_all_previous(string=True, limit=40)
-        texto_antes = "\n".join(reversed([s.strip() for s in strings_antes if s and s.strip()]))
+        # (mais próximos do link primeiro, por isso invertemos "antes").
+        # Ignora-se texto que pertença a tags <script>/<style> (ex: CSS
+        # gerado por bibliotecas como Emotion, que por vezes aparece
+        # embutido dentro do próprio link) — não é conteúdo visível.
+        strings_antes = a.find_all_previous(string=True, limit=60)
+        texto_antes = "\n".join(reversed([
+            s.strip() for s in strings_antes
+            if s and s.strip() and s.parent.name not in ("script", "style")
+        ]))
+        # \xa0 (espaço sem quebra) é usado por alguns sites entre dígitos
+        # de preços, e parece visualmente igual a um espaço normal — mas
+        # não é reconhecido como tal pelos padrões abaixo sem normalizar.
+        texto_antes = texto_antes.replace("\xa0", " ")
 
-        strings_depois = a.find_all_next(string=True, limit=40)
-        texto_depois = "\n".join([s.strip() for s in strings_depois if s and s.strip()])
+        strings_depois = a.find_all_next(string=True, limit=60)
+        texto_depois = "\n".join([
+            s.strip() for s in strings_depois
+            if s and s.strip() and s.parent.name not in ("script", "style")
+        ])
+        texto_depois = texto_depois.replace("\xa0", " ")
 
         # Preço: o último valor encontrado logo antes do link
         precos_antes = PADRAO_PRECO.findall(texto_antes[-250:])
