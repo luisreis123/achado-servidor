@@ -92,37 +92,39 @@ def extrair_imoveis_da_pagina_de_resultados(html: str, tipo: str, operacao: str)
     cada anúncio individual). Muito mais rápido e dá mais resultados por
     pesquisa (tipicamente 36, o total de uma página do site).
 
-    Cada anúncio na listagem tem um link de título (com texto visível) e
-    vários links de imagem (sem texto, apenas imagens). Localizamos os
-    links de TÍTULO pelo texto não-vazio, e usamos a posição desse texto
-    na página para procurar o preço um pouco antes, e a morada/tipologia/
-    área um pouco depois — replicando a ordem real observada no site.
+    Em vez de procurar o texto do título dentro do texto completo da
+    página (abordagem anterior, que falhava sempre que o título estava
+    dividido por elementos HTML aninhados, ex: <span> dentro do link),
+    navega-se a árvore HTML diretamente a partir de cada link — usando
+    find_all_previous/find_all_next para apanhar os nós de texto reais
+    antes e depois do link, na ordem em que existem no documento.
     """
     soup = BeautifulSoup(html, "html.parser")
-    texto = soup.get_text(separator="\n")
-
     anchors = soup.find_all("a", href=PADRAO_LINK_ANUNCIO)
     resultados = []
     hrefs_vistos = set()
 
     for a in anchors:
-        titulo = a.get_text(strip=True)
+        # separator=" " evita que texto de <span>s aninhados fique colado
+        # sem espaço (ex: "Apartamento T3para venda")
+        titulo = a.get_text(separator=" ", strip=True)
+        titulo = re.sub(r"\s+", " ", titulo).strip()
         href = a.get("href", "")
 
-        # Ignora links sem texto (são as imagens, não o título) e duplicados
         if not titulo or href in hrefs_vistos:
             continue
         hrefs_vistos.add(href)
 
-        idx = texto.find(titulo)
-        if idx == -1:
-            continue
+        # Nós de texto reais antes/depois do link, na ordem do documento
+        # (mais próximos do link primeiro, por isso invertemos "antes")
+        strings_antes = a.find_all_previous(string=True, limit=40)
+        texto_antes = "\n".join(reversed([s.strip() for s in strings_antes if s and s.strip()]))
 
-        janela_antes = texto[max(0, idx - 250):idx]
-        janela_depois = texto[idx:idx + 500]
+        strings_depois = a.find_all_next(string=True, limit=40)
+        texto_depois = "\n".join([s.strip() for s in strings_depois if s and s.strip()])
 
-        # Preço: o último valor de preço encontrado logo antes do título
-        precos_antes = PADRAO_PRECO.findall(janela_antes)
+        # Preço: o último valor encontrado logo antes do link
+        precos_antes = PADRAO_PRECO.findall(texto_antes[-250:])
         preco = None
         if precos_antes:
             try:
@@ -130,11 +132,11 @@ def extrair_imoveis_da_pagina_de_resultados(html: str, tipo: str, operacao: str)
             except ValueError:
                 preco = None
 
-        m_tipologia = PADRAO_TIPOLOGIA.search(janela_depois)
+        m_tipologia = PADRAO_TIPOLOGIA.search(texto_depois)
         tipologia = m_tipologia.group(1) if m_tipologia else None
         quartos = _tipologia_para_quartos(tipologia)
 
-        m_area = PADRAO_AREA_LISTAGEM.search(janela_depois)
+        m_area = PADRAO_AREA_LISTAGEM.search(texto_depois)
         area_m2 = None
         if m_area:
             try:
@@ -142,20 +144,19 @@ def extrair_imoveis_da_pagina_de_resultados(html: str, tipo: str, operacao: str)
             except ValueError:
                 area_m2 = None
 
-        # Morada: primeira linha não vazia a seguir ao título
-        linhas_depois = [l.strip() for l in janela_depois.split("\n") if l.strip()]
+        # Morada: primeira linha a seguir ao link que não faça parte do
+        # próprio título (o primeiro nó de texto "depois" pode ainda ser
+        # um fragmento do título, se este estiver dividido em <span>s)
+        linhas_depois = [l.strip() for l in texto_depois.split("\n") if l.strip()]
+        titulo_compacto = titulo.replace(" ", "")
+        i = 0
+        while i < len(linhas_depois) and linhas_depois[i].replace(" ", "") in titulo_compacto:
+            i += 1
         local = None
-        if titulo in linhas_depois:
-            pos_titulo = linhas_depois.index(titulo)
-            if pos_titulo + 1 < len(linhas_depois):
-                candidato = linhas_depois[pos_titulo + 1]
-                # A morada não deve ser o próprio rótulo "Tipologia"
-                if candidato != "Tipologia":
-                    local = candidato
+        if i < len(linhas_depois) and linhas_depois[i] != "Tipologia":
+            local = linhas_depois[i]
 
         if preco is None:
-            # Sem preço não vale a pena devolver — provavelmente a janela
-            # de texto não apanhou o valor certo para este cartão.
             continue
 
         url_original = f"https://www.imovirtual.com{href}"
@@ -168,7 +169,7 @@ def extrair_imoveis_da_pagina_de_resultados(html: str, tipo: str, operacao: str)
             "area_m2": area_m2,
             "quartos": quartos,
             "local": local,
-            "thumbnail_url": None,  # associar imagem de forma fiável exigiria mais inspeção da estrutura real
+            "thumbnail_url": None,
             "tipo": tipo,
             "operacao": operacao,
         })
