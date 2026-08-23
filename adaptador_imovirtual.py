@@ -72,7 +72,14 @@ def construir_url_pesquisa(cidade: str, tipo: str, operacao: str) -> str | None:
     if not operacao_slug or not tipo_slug:
         return None
 
-    cidade_slug = cidade.strip().lower().replace(" ", "-")
+    cidade = (cidade or "").strip()
+    if not cidade:
+        # Confirmado por inspeção real: "todo-o-pais" substitui o
+        # segmento distrito/concelho, sem repetir (ao contrário de
+        # quando se indica uma cidade, que usa cidade/cidade duas vezes)
+        return f"https://www.imovirtual.com/pt/resultados/{operacao_slug}/{tipo_slug}/todo-o-pais"
+
+    cidade_slug = cidade.lower().replace(" ", "-")
     return f"https://www.imovirtual.com/pt/resultados/{operacao_slug}/{tipo_slug}/{cidade_slug}/{cidade_slug}"
 
 

@@ -282,7 +282,7 @@ async def executar_pesquisa(cidade: str, tipos_lista: list[str], operacao: str, 
 
 @app.get("/pesquisar")
 async def pesquisar(
-    cidade: str = Query(..., description="Cidade ou area, ex: Lisboa"),
+    cidade: str = Query("", description="Cidade ou area, ex: Lisboa. Vazio = todo o país."),
     tipos: str = Query("", description="Tipos separados por virgula, ex: apartamento,terreno"),
     operacao: str = Query("venda", description="venda | arrendamento"),
     fontes: str = Query("", description="IDs de fontes separadas por virgula. Vazio = todas."),

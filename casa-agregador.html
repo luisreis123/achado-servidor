@@ -1,0 +1,1021 @@
+<!DOCTYPE html>
+<html lang="pt-PT">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Achado — pesquisa de imóveis em Portugal</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Work+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+  :root {
+    --ink: #152238;
+    --ink-2: #1C2C48;
+    --azulejo: #3D6B8A;
+    --azulejo-light: #5C8FB0;
+    --terracota: #C1613E;
+    --marfim: #EDE8DD;
+    --pedra: #8B95A8;
+    --ocre: #D4A54A;
+    --linha: rgba(237, 232, 221, 0.12);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--ink);
+    color: var(--marfim);
+    font-family: 'Work Sans', sans-serif;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .azulejo-bg {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    opacity: 0.05;
+    pointer-events: none;
+    background-image:
+      repeating-linear-gradient(45deg, var(--azulejo-light) 0, var(--azulejo-light) 1px, transparent 1px, transparent 32px),
+      repeating-linear-gradient(-45deg, var(--azulejo-light) 0, var(--azulejo-light) 1px, transparent 1px, transparent 32px);
+  }
+
+  .wrap { position: relative; z-index: 1; max-width: 1180px; margin: 0 auto; padding: 0 32px; }
+
+  header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 28px 0;
+    border-bottom: 1px solid var(--linha);
+  }
+
+  .logo {
+    font-family: 'Fraunces', serif;
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .logo::before {
+    content: "";
+    width: 14px;
+    height: 14px;
+    background: var(--terracota);
+    display: inline-block;
+    transform: rotate(45deg);
+  }
+
+  .logo span { color: var(--pedra); font-family: 'IBM Plex Mono', monospace; font-size: 12px; font-weight: 400; }
+
+  nav { display: flex; gap: 32px; font-size: 14px; color: var(--pedra); }
+  nav a { color: var(--pedra); text-decoration: none; transition: color 0.2s; }
+  nav a:hover, nav a:focus-visible { color: var(--marfim); }
+
+  .hero { padding: 72px 0 48px; }
+  .eyebrow {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--azulejo-light);
+    margin-bottom: 18px;
+  }
+  .eyebrow::before { content: "01 — "; color: var(--terracota); }
+
+  h1 {
+    font-family: 'Fraunces', serif;
+    font-size: clamp(36px, 5vw, 58px);
+    font-weight: 500;
+    line-height: 1.05;
+    max-width: 780px;
+    letter-spacing: -0.01em;
+  }
+  h1 em { font-style: italic; color: var(--ocre); }
+
+  .hero p {
+    margin-top: 20px;
+    color: var(--pedra);
+    font-size: 17px;
+    max-width: 540px;
+  }
+
+  .search-panel {
+    margin-top: 44px;
+    background: var(--ink-2);
+    border: 1px solid var(--linha);
+    padding: 24px;
+  }
+
+  .search-row {
+    display: flex;
+    gap: 14px;
+    flex-wrap: wrap;
+  }
+
+  .field {
+    flex: 1;
+    min-width: 160px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .field label {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--pedra);
+  }
+
+  .field select, .field input {
+    background: var(--ink);
+    border: 1px solid var(--linha);
+    color: var(--marfim);
+    padding: 12px 14px;
+    font-family: 'Work Sans', sans-serif;
+    font-size: 14px;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+
+  .field select:focus-visible, .field input:focus-visible {
+    border-color: var(--azulejo-light);
+  }
+
+  .btn-pesquisar {
+    align-self: flex-end;
+    background: var(--terracota);
+    color: var(--marfim);
+    border: none;
+    padding: 12px 28px;
+    font-family: 'Work Sans', sans-serif;
+    font-weight: 600;
+    font-size: 14px;
+    cursor: pointer;
+    transition: background 0.2s;
+    white-space: nowrap;
+  }
+  .btn-pesquisar:hover, .btn-pesquisar:focus-visible { background: #A8532F; }
+
+  .tipo-tags-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 20px;
+  }
+
+  .tipo-hint {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    color: var(--pedra);
+  }
+
+  .limpar-tags {
+    background: none;
+    border: none;
+    color: var(--azulejo-light);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    cursor: pointer;
+    text-decoration: underline;
+  }
+
+  .tipo-tags {
+    display: flex;
+    gap: 8px;
+    margin-top: 10px;
+    flex-wrap: wrap;
+  }
+
+  .tag {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    padding: 7px 14px;
+    border: 1px solid var(--linha);
+    color: var(--pedra);
+    cursor: pointer;
+    background: transparent;
+    transition: all 0.15s;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+  }
+  .tag::before {
+    content: "";
+    width: 8px;
+    height: 8px;
+    border: 1px solid var(--pedra);
+    display: inline-block;
+    transition: all 0.15s;
+  }
+  .tag:hover, .tag:focus-visible { border-color: var(--azulejo-light); color: var(--marfim); }
+  .tag.ativo { background: var(--azulejo); border-color: var(--azulejo); color: var(--marfim); }
+  .tag.ativo::before { background: var(--ocre); border-color: var(--ocre); }
+
+  /* Mapa + resultados lado a lado */
+  .resultados { padding: 64px 0 90px; }
+
+  .resultados-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 28px;
+    border-bottom: 1px solid var(--linha);
+    padding-bottom: 18px;
+  }
+
+  .resultados-header h2 {
+    font-family: 'Fraunces', serif;
+    font-size: 22px;
+    font-weight: 500;
+  }
+
+  .contagem { font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: var(--pedra); }
+
+  .conteudo {
+    display: grid;
+    grid-template-columns: 380px 1fr;
+    gap: 1px;
+    background: var(--linha);
+    border: 1px solid var(--linha);
+  }
+
+  #mapa {
+    background: var(--ink-2);
+    width: 100%;
+    height: 640px;
+    position: sticky;
+    top: 20px;
+  }
+  #mapa > .erro-mapa { position: absolute; }
+
+  .lista-scroll {
+    background: var(--ink);
+    max-height: 720px;
+    overflow-y: auto;
+  }
+
+  .card {
+    background: var(--ink);
+    padding: 22px;
+    position: relative;
+    transition: background 0.2s;
+    border-bottom: 1px solid var(--linha);
+    cursor: pointer;
+  }
+  .card:last-child { border-bottom: none; }
+  .card:hover, .card.destacado { background: var(--ink-2); }
+
+  .card-foto {
+    margin: -22px -22px 18px -22px;
+    aspect-ratio: 16 / 9;
+    overflow: hidden;
+    background: var(--ink-2);
+    border-bottom: 1px solid var(--linha);
+  }
+
+  .card-foto img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+
+  .card-top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 14px; }
+
+  .card-tipo {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--azulejo-light);
+  }
+
+  .card-fontes {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    color: var(--ocre);
+    border: 1px solid rgba(212,165,74,0.35);
+    padding: 3px 8px;
+    white-space: nowrap;
+  }
+
+  .card h3 {
+    font-family: 'Fraunces', serif;
+    font-size: 18px;
+    font-weight: 500;
+    margin-bottom: 6px;
+  }
+
+  .card-local { font-size: 13px; color: var(--pedra); margin-bottom: 16px; }
+
+  .card-dados {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    color: var(--pedra);
+    margin-bottom: 18px;
+    padding-bottom: 18px;
+    border-bottom: 1px solid var(--linha);
+  }
+
+  .card-dados strong { color: var(--marfim); font-weight: 500; }
+
+  .card-preco {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 20px;
+    color: var(--marfim);
+    margin-bottom: 16px;
+  }
+
+  .card-preco span { font-size: 12px; color: var(--pedra); }
+
+  .card a.ver {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--marfim);
+    text-decoration: none;
+    border-bottom: 1px solid var(--terracota);
+    padding-bottom: 3px;
+    transition: gap 0.2s;
+  }
+  .card a.ver:hover, .card a.ver:focus-visible { gap: 12px; }
+
+  .sem-resultados {
+    padding: 60px 22px;
+    text-align: center;
+    color: var(--pedra);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+  }
+
+  .painel-historico {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    color: var(--marfim);
+    display: none;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--linha);
+    line-height: 1.8;
+  }
+  .painel-historico.aberto { display: block; }
+
+  /* Popup do Leaflet com o estilo do site */
+  .leaflet-popup-content-wrapper {
+    background: var(--ink-2);
+    color: var(--marfim);
+    border-radius: 0;
+    border: 1px solid var(--linha);
+  }
+  .leaflet-popup-tip { background: var(--ink-2); }
+  .leaflet-popup-content { font-family: 'Work Sans', sans-serif; font-size: 13px; margin: 12px 14px; }
+  .popup-tipo { font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: var(--azulejo-light); text-transform: uppercase; }
+  .popup-titulo { font-family: 'Fraunces', serif; font-size: 15px; margin: 4px 0; }
+  .popup-preco { font-family: 'IBM Plex Mono', monospace; color: var(--ocre); font-size: 13px; }
+
+  .pin-icon {
+    width: 16px;
+    height: 16px;
+    background: var(--terracota);
+    border: 2px solid var(--marfim);
+    transform: rotate(45deg);
+    box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+  }
+  .pin-icon.destacado { background: var(--ocre); width: 20px; height: 20px; }
+
+  .erro-mapa {
+    position: absolute;
+    inset: 0;
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 40px;
+    background: var(--ink-2);
+    color: var(--pedra);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+    line-height: 1.7;
+  }
+
+  footer {
+    border-top: 1px solid var(--linha);
+    padding: 32px 0;
+    font-size: 13px;
+    color: var(--pedra);
+    display: flex;
+    justify-content: space-between;
+  }
+
+  footer a { color: var(--pedra); }
+
+  @media (max-width: 900px) {
+    .conteudo { grid-template-columns: 1fr; }
+    #mapa { position: relative; height: 380px; max-height: none; top: 0; }
+    .lista-scroll { max-height: none; overflow-y: visible; }
+  }
+
+  @media (max-width: 640px) {
+    .wrap { padding: 0 20px; }
+    nav { display: none; }
+    .search-row { flex-direction: column; }
+    .btn-pesquisar { align-self: stretch; }
+    footer { flex-direction: column; gap: 8px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<div class="azulejo-bg"></div>
+
+<div class="wrap">
+  <header>
+    <div class="logo">Achado <span>agregador nacional</span></div>
+    <nav>
+      <a href="#">Como funciona</a>
+      <a href="#">Fontes</a>
+      <a href="#">Guardados</a>
+    </nav>
+  </header>
+
+  <section class="hero">
+    <div class="eyebrow">Portugal — todos os portais, um só lugar</div>
+    <h1>Um imóvel pode estar em <em>três sites</em> ao mesmo tempo. Nós já sabemos qual.</h1>
+    <p>Pesquisamos nos principais portais portugueses e agrupamos os anúncios duplicados, para veres o que existe de verdade — sem repetições.</p>
+
+    <div class="search-panel">
+      <div class="search-row">
+        <div class="field">
+          <label for="pais">País</label>
+          <select id="pais">
+            <option>Portugal</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="cidade">Cidade ou área</label>
+          <input id="cidade" type="text" placeholder="Deixa em branco para todo o país">
+        </div>
+        <div class="field">
+          <label for="operacao">Operação</label>
+          <select id="operacao">
+            <option>Comprar</option>
+            <option>Arrendar</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="preco">Preço até</label>
+          <input id="preco" type="text" placeholder="Ex: 350.000 €">
+        </div>
+        <button class="btn-pesquisar" id="btnPesquisar">Pesquisar</button>
+      </div>
+
+      <div class="tipo-tags-header" style="margin-top: 20px;">
+        <span class="tipo-hint">Endereço do servidor</span>
+      </div>
+      <div class="search-row" style="margin-top: 8px;">
+        <div class="field" style="flex: 2;">
+          <input id="enderecoServidor" type="text" placeholder="https://o-teu-servidor.onrender.com">
+        </div>
+        <button class="btn-pesquisar" id="btnGuardarEndereco" style="background: var(--azulejo);">Guardar</button>
+      </div>
+
+      <div class="tipo-tags-header">
+        <span class="tipo-hint">Filtrar por tipo — podes combinar vários</span>
+        <button class="limpar-tags" id="limparTags">limpar seleção</button>
+      </div>
+      <div class="tipo-tags" id="tiposContainer">
+        <!-- Tags geradas via JS a partir de TIPOS_DISPONIVEIS -->
+      </div>
+
+      <div class="tipo-tags-header" style="margin-top: 20px;">
+        <span class="tipo-hint">Área (m²)</span>
+      </div>
+      <div class="search-row" style="margin-top: 8px;">
+        <div class="field">
+          <input id="areaMin" type="number" min="0" placeholder="De">
+        </div>
+        <div class="field">
+          <input id="areaMax" type="number" min="0" placeholder="Até">
+        </div>
+      </div>
+
+      <div class="tipo-tags-header" style="margin-top: 20px;">
+        <span class="tipo-hint">Preço (€)</span>
+      </div>
+      <div class="search-row" style="margin-top: 8px;">
+        <div class="field">
+          <input id="precoMin" type="number" min="0" placeholder="De">
+        </div>
+        <div class="field">
+          <input id="precoMax" type="number" min="0" placeholder="Até">
+        </div>
+      </div>
+
+      <div class="tipo-tags-header" style="margin-top: 20px;">
+        <span class="tipo-hint">Ordenar por</span>
+      </div>
+      <div class="search-row" style="margin-top: 8px;">
+        <div class="field">
+          <select id="ordenarPor">
+            <option value="relevancia">Relevância (como veio)</option>
+            <option value="preco-asc">Preço: mais barato primeiro</option>
+            <option value="preco-desc">Preço: mais caro primeiro</option>
+            <option value="area-asc">Área: menor primeiro</option>
+            <option value="area-desc">Área: maior primeiro</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="tipo-tags-header" style="margin-top: 20px;">
+        <span class="tipo-hint">Exibição</span>
+      </div>
+      <div class="tipo-tags" style="margin-top: 10px;">
+        <button class="tag ativo" id="toggleFotos" type="button">mostrar fotos</button>
+      </div>
+
+      <div class="tipo-tags-header" style="margin-top: 20px;">
+        <span class="tipo-hint">Pesquisar nestas fontes</span>
+        <span class="tipo-hint" id="statusServidor">a verificar servidor local...</span>
+      </div>
+      <div class="tipo-tags" id="fontesContainer">
+        <!-- Checkboxes de fontes geradas via JS, vindas de /fontes -->
+      </div>
+
+      <div class="tipo-tags-header" style="margin-top: 20px;">
+        <span class="tipo-hint">Avisa-me por email quando surgir algo novo com estes filtros</span>
+      </div>
+      <div class="search-row" style="margin-top: 8px;">
+        <div class="field" style="flex: 2;">
+          <input id="emailAlerta" type="email" placeholder="o-teu-email@exemplo.pt">
+        </div>
+        <button class="btn-pesquisar" id="btnCriarAlerta" style="background: var(--ocre); color: var(--ink);">Criar alerta</button>
+      </div>
+      <div id="statusAlerta" style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: var(--pedra); margin-top: 8px;"></div>
+    </div>
+  </section>
+
+  <section class="resultados">
+    <div class="resultados-header">
+      <h2 id="tituloResultados">247 imóveis encontrados</h2>
+      <div class="contagem">agrupados de 6 fontes · atualizado há 3h</div>
+    </div>
+
+    <div class="conteudo">
+      <div id="mapa"></div>
+      <div class="lista-scroll" id="listaContainer">
+        <!-- Cartões gerados via JS a partir de IMOVEIS -->
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <span>Achado — os anúncios pertencem às fontes originais; aqui apenas agrupamos e redirecionamos.</span>
+    <a href="#">Sobre as fontes</a>
+  </footer>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+  // --- Configuração da ligação ao servidor ---
+  // O utilizador define o endereço no campo da interface (fica guardado
+  // no browser, para não ser preciso escrever de novo em cada visita).
+  let SERVIDOR_URL = localStorage.getItem('achado_servidor_url') || 'http://127.0.0.1:8000';
+  document.getElementById('enderecoServidor').value = SERVIDOR_URL;
+
+  document.getElementById('btnGuardarEndereco').addEventListener('click', () => {
+    const valor = document.getElementById('enderecoServidor').value.trim().replace(/\/$/, '');
+    if (valor) {
+      SERVIDOR_URL = valor;
+      localStorage.setItem('achado_servidor_url', valor);
+      carregarFontes();
+    }
+  });
+
+  let IMOVEIS = [];              // preenchido pela pesquisa real ao servidor
+  let tiposAtivos = new Set();   // vazio = mostrar todos os tipos
+  let fontesAtivas = new Set();  // vazio = pesquisar em todas as fontes
+  let mostrarFotos = true;
+
+  const tiposContainer = document.getElementById('tiposContainer');
+  const fontesContainer = document.getElementById('fontesContainer');
+  const listaContainer = document.getElementById('listaContainer');
+  const tituloResultados = document.getElementById('tituloResultados');
+  const limparTagsBtn = document.getElementById('limparTags');
+  const statusServidor = document.getElementById('statusServidor');
+  const btnPesquisar = document.getElementById('btnPesquisar');
+
+  const TIPOS_DISPONIVEIS = [
+    { valor: 'apartamento', label: 'Apartamento' },
+    { valor: 'moradia', label: 'Moradia' },
+    { valor: 'terreno', label: 'Terreno' },
+    { valor: 'loja', label: 'Loja' },
+    { valor: 'escritorio', label: 'Escritório' },
+    { valor: 'armazem', label: 'Armazém' },
+  ];
+
+  // --- Renderizar as tags de tipo (multi-seleção) ---
+  function renderTags() {
+    tiposContainer.innerHTML = '';
+    TIPOS_DISPONIVEIS.forEach(t => {
+      const btn = document.createElement('button');
+      btn.className = 'tag' + (tiposAtivos.has(t.valor) ? ' ativo' : '');
+      btn.setAttribute('type', 'button');
+      btn.setAttribute('aria-pressed', tiposAtivos.has(t.valor));
+      btn.textContent = t.label;
+      btn.addEventListener('click', () => {
+        tiposAtivos.has(t.valor) ? tiposAtivos.delete(t.valor) : tiposAtivos.add(t.valor);
+        renderTags();
+        renderListaEMapa();
+      });
+      tiposContainer.appendChild(btn);
+    });
+  }
+
+  limparTagsBtn.addEventListener('click', () => {
+    tiposAtivos.clear();
+    renderTags();
+    renderListaEMapa();
+  });
+
+  // --- Filtros de área e preço (De/Até) — aplicados localmente, sem nova pesquisa ---
+  ['areaMin', 'areaMax', 'precoMin', 'precoMax'].forEach(id => {
+    document.getElementById(id).addEventListener('input', () => renderListaEMapa());
+  });
+  document.getElementById('ordenarPor').addEventListener('change', () => renderListaEMapa());
+
+  // --- Mostrar/ocultar fotos ---
+  const toggleFotosBtn = document.getElementById('toggleFotos');
+  toggleFotosBtn.addEventListener('click', () => {
+    mostrarFotos = !mostrarFotos;
+    toggleFotosBtn.classList.toggle('ativo', mostrarFotos);
+    toggleFotosBtn.textContent = mostrarFotos ? 'mostrar fotos' : 'fotos ocultas';
+    renderListaEMapa();
+  });
+
+  // --- Ligar ao servidor local e obter a lista de fontes disponíveis ---
+  async function carregarFontes() {
+    try {
+      const resposta = await fetch(`${SERVIDOR_URL}/fontes`, { signal: AbortSignal.timeout(3000) });
+      const fontes = await resposta.json();
+
+      statusServidor.textContent = `servidor local ligado · ${fontes.length} fontes`;
+      statusServidor.style.color = '#7FA88C';
+
+      fontesContainer.innerHTML = '';
+      fontes.forEach(f => {
+        const btn = document.createElement('button');
+        btn.className = 'tag';
+        btn.setAttribute('type', 'button');
+        btn.textContent = f.nome;
+        btn.addEventListener('click', () => {
+          fontesAtivas.has(f.id) ? fontesAtivas.delete(f.id) : fontesAtivas.add(f.id);
+          btn.classList.toggle('ativo');
+        });
+        fontesContainer.appendChild(btn);
+      });
+    } catch (erro) {
+      statusServidor.textContent = 'servidor local não encontrado';
+      statusServidor.style.color = 'var(--terracota)';
+      fontesContainer.innerHTML = `
+        <div class="sem-resultados" style="padding: 12px 0; text-align: left;">
+          Não consegui ligar a ${SERVIDOR_URL}.<br>
+          Corre <code style="color: var(--ocre);">uvicorn main:app --reload</code>
+          na pasta servidor-local e recarrega esta página.
+        </div>`;
+    }
+  }
+
+  // --- Disparar uma pesquisa real ao servidor ---
+  async function pesquisar() {
+    const cidade = document.getElementById('cidade').value.trim();
+    const operacao = document.getElementById('operacao').value === 'Arrendar' ? 'arrendamento' : 'venda';
+    const tiposQuery = Array.from(tiposAtivos).join(',');
+    const fontesQuery = Array.from(fontesAtivas).join(',');
+
+    btnPesquisar.textContent = 'A pesquisar...';
+    btnPesquisar.disabled = true;
+    listaContainer.innerHTML = '<div class="sem-resultados">A consultar as fontes selecionadas — pode demorar alguns segundos...</div>';
+
+    try {
+      const url = `${SERVIDOR_URL}/pesquisar?cidade=${encodeURIComponent(cidade)}&tipos=${tiposQuery}&operacao=${operacao}&fontes=${fontesQuery}`;
+      const resposta = await fetch(url, { signal: AbortSignal.timeout(30000) });
+      const dados = await resposta.json();
+
+      IMOVEIS = (dados.resultados || []).map((r, i) => ({
+        id: i,
+        tipo: r.tipo,
+        tipoLabel: r.tipo,
+        titulo: r.titulo,
+        local: r.local,
+        lat: r.latitude || null,
+        lng: r.longitude || null,
+        area: r.area_m2,
+        quartos: r.quartos,
+        preco: r.preco,
+        precoLabel: r.preco ? `${r.preco.toLocaleString('pt-PT')} €` : '—',
+        fontes: r._fontes ? r._fontes.length : 1,
+        foto: r.thumbnail_url || null,
+        urlOriginal: r.url_original,
+        hash: r._hash,
+      }));
+
+      renderListaEMapa();
+    } catch (erro) {
+      listaContainer.innerHTML = `
+        <div class="sem-resultados">
+          A pesquisa falhou ou demorou demasiado tempo.<br>
+          Verifica se o servidor local está a correr e tenta novamente.
+        </div>`;
+    } finally {
+      btnPesquisar.textContent = 'Pesquisar';
+      btnPesquisar.disabled = false;
+    }
+  }
+
+  btnPesquisar.addEventListener('click', pesquisar);
+
+  // --- Criar alerta por email com os filtros atuais ---
+  const btnCriarAlerta = document.getElementById('btnCriarAlerta');
+  const statusAlerta = document.getElementById('statusAlerta');
+
+  btnCriarAlerta.addEventListener('click', async () => {
+    const email = document.getElementById('emailAlerta').value.trim();
+    if (!email || !email.includes('@')) {
+      statusAlerta.textContent = 'Introduz um email válido.';
+      statusAlerta.style.color = 'var(--terracota)';
+      return;
+    }
+
+    const cidade = document.getElementById('cidade').value.trim();
+    const operacao = document.getElementById('operacao').value === 'Arrendar' ? 'arrendamento' : 'venda';
+
+    statusAlerta.textContent = 'A criar alerta...';
+    statusAlerta.style.color = 'var(--pedra)';
+
+    try {
+      const resposta = await fetch(`${SERVIDOR_URL}/alertas`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email,
+          cidade,
+          tipos: Array.from(tiposAtivos).join(','),
+          operacao,
+          fontes: Array.from(fontesAtivas).join(','),
+        }),
+      });
+      if (!resposta.ok) throw new Error('Falha no servidor');
+
+      statusAlerta.textContent = `Alerta criado para ${cidade}. Vais receber um email quando surgir algo novo.`;
+      statusAlerta.style.color = '#7FA88C';
+    } catch (erro) {
+      statusAlerta.textContent = 'Não foi possível criar o alerta. Verifica se o servidor está ligado.';
+      statusAlerta.style.color = 'var(--terracota)';
+    }
+  });
+
+  // --- Ver histórico de preço de um imóvel ---
+  async function verHistorico(hash, tituloImovel) {
+    const painel = document.getElementById(`historico-${hash}`);
+    if (!painel) return;
+
+    if (painel.classList.contains('aberto')) {
+      painel.classList.remove('aberto');
+      painel.innerHTML = '';
+      return;
+    }
+
+    painel.classList.add('aberto');
+    painel.innerHTML = '<span style="color: var(--pedra);">a carregar...</span>';
+
+    try {
+      const resposta = await fetch(`${SERVIDOR_URL}/historico/${hash}`);
+      if (resposta.status === 404) {
+        painel.innerHTML = '<span style="color: var(--pedra);">Ainda não há histórico para este imóvel — volta a pesquisar noutro dia para começares a acumular dados.</span>';
+        return;
+      }
+      const dados = await resposta.json();
+      const pontos = dados.pontos;
+
+      if (pontos.length === 1) {
+        painel.innerHTML = `<span style="color: var(--pedra);">Só temos uma observação até agora: ${pontos[0].preco.toLocaleString('pt-PT')} €</span>`;
+        return;
+      }
+
+      const linhas = pontos.map(p => {
+        const data = new Date(p.registado_em * 1000).toLocaleDateString('pt-PT');
+        return `<div>${data} — <strong>${p.preco.toLocaleString('pt-PT')} €</strong></div>`;
+      }).join('');
+
+      const primeiro = pontos[0].preco;
+      const ultimo = pontos[pontos.length - 1].preco;
+      const variacao = ultimo - primeiro;
+      const corVariacao = variacao > 0 ? 'var(--terracota)' : variacao < 0 ? '#7FA88C' : 'var(--pedra)';
+      const sinalVariacao = variacao > 0 ? '+' : '';
+
+      painel.innerHTML = `
+        <div style="margin-bottom: 8px; color: ${corVariacao};">
+          ${sinalVariacao}${variacao.toLocaleString('pt-PT')} € desde a primeira observação
+        </div>
+        ${linhas}
+      `;
+    } catch (erro) {
+      painel.innerHTML = '<span style="color: var(--terracota);">Não foi possível carregar o histórico.</span>';
+    }
+  }
+
+  // --- Mapa (Leaflet + OpenStreetMap) ---
+  const mapa = L.map('mapa', { scrollWheelZoom: false }).setView([39.6, -8.3], 6.3);
+
+  const camadaTiles = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap contributors',
+    maxZoom: 19,
+    subdomains: 'abc',
+  }).addTo(mapa);
+
+  // Deteção de falha: se os tiles não carregarem (sem ligação, DNS
+  // bloqueado, etc.), mostra uma mensagem em vez de ficar em branco.
+  let falhas = 0;
+  camadaTiles.on('tileerror', () => {
+    falhas++;
+    if (falhas > 5) mostrarErroMapa();
+  });
+
+  function mostrarErroMapa() {
+    const mapaDiv = document.getElementById('mapa');
+    if (mapaDiv.querySelector('.erro-mapa')) return;
+    const aviso = document.createElement('div');
+    aviso.className = 'erro-mapa';
+    aviso.innerHTML = 'Não foi possível carregar o mapa.<br>Verifica a ligação à internet ou abre este ficheiro diretamente no Chrome.';
+    mapaDiv.appendChild(aviso);
+  }
+
+  // O Leaflet calcula o tamanho do mapa no momento em que é criado.
+  // Se o container ainda não tiver as dimensões finais nesse instante
+  // (por exemplo, por a página ainda estar a aplicar CSS/fontes), os
+  // tiles ficam cinzentos ou não aparecem. invalidateSize() forca um
+  // novo calculo depois de tudo estar carregado.
+  window.addEventListener('load', () => mapa.invalidateSize());
+  window.addEventListener('resize', () => mapa.invalidateSize());
+  setTimeout(() => mapa.invalidateSize(), 300);
+
+  function criarIconePin(destacado) {
+    return L.divIcon({
+      className: '',
+      html: `<div class="pin-icon${destacado ? ' destacado' : ''}"></div>`,
+      iconSize: destacado ? [20, 20] : [16, 16],
+      iconAnchor: destacado ? [10, 10] : [8, 8],
+    });
+  }
+
+  const marcadores = {}; // id -> marcador Leaflet (preenchido a cada pesquisa)
+
+  // --- Destacar cartão <-> pino ao passar/clicar ---
+  function destacarCard(id) {
+    document.querySelectorAll('.card').forEach(c => c.classList.remove('destacado'));
+    const card = document.querySelector(`.card[data-id="${id}"]`);
+    if (card) {
+      card.classList.add('destacado');
+      card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  }
+
+  // --- Renderizar lista de cartões ---
+  function renderLista(imoveis) {
+    listaContainer.innerHTML = '';
+
+    if (imoveis.length === 0) {
+      listaContainer.innerHTML = '<div class="sem-resultados">Nenhum imóvel corresponde aos filtros selecionados.</div>';
+      return;
+    }
+
+    imoveis.forEach(imovel => {
+      const card = document.createElement('div');
+      card.className = 'card';
+      card.setAttribute('data-id', imovel.id);
+
+      const dados = [];
+      if (imovel.area) dados.push(`<strong>${imovel.area}</strong> m²`);
+      if (imovel.quartos) dados.push(`<strong>${imovel.quartos}</strong> quartos`);
+
+      const fotoHtml = (mostrarFotos && imovel.foto)
+        ? `<div class="card-foto"><img src="${imovel.foto}" alt="Foto do imóvel: ${imovel.titulo}" loading="lazy"></div>`
+        : '';
+
+      const linkHtml = imovel.urlOriginal
+        ? `<a class="ver" href="${imovel.urlOriginal}" target="_blank" rel="noopener noreferrer">Ver anúncio original →</a>`
+        : '';
+
+      const hash = imovel.hash || '';
+      const historicoHtml = hash
+        ? `<button class="limpar-tags" style="margin-top: 10px; display: block;" onclick="verHistorico('${hash}', '${(imovel.titulo || '').replace(/'/g, '')}')">ver histórico de preço</button>
+           <div id="historico-${hash}" class="painel-historico"></div>`
+        : '';
+
+      card.innerHTML = `
+        ${fotoHtml}
+        <div class="card-top">
+          <span class="card-tipo">${imovel.tipoLabel}</span>
+          <span class="card-fontes">${imovel.fontes} ${imovel.fontes === 1 ? 'fonte' : 'fontes'}</span>
+        </div>
+        <h3>${imovel.titulo || 'Sem título'}</h3>
+        <div class="card-local">${imovel.local || ''}</div>
+        ${dados.length ? `<div class="card-dados">${dados.map(d => `<span>${d}</span>`).join('')}</div>` : ''}
+        <div class="card-preco">${imovel.precoLabel}</div>
+        ${linkHtml}
+        ${historicoHtml}
+      `;
+
+      card.addEventListener('mouseenter', () => {
+        if (marcadores[imovel.id]) {
+          marcadores[imovel.id].setIcon(criarIconePin(true));
+          marcadores[imovel.id].openPopup();
+        }
+      });
+      card.addEventListener('mouseleave', () => {
+        if (marcadores[imovel.id]) marcadores[imovel.id].setIcon(criarIconePin(false));
+      });
+
+      listaContainer.appendChild(card);
+    });
+  }
+
+  // --- Filtrar localmente por tipo + atualizar lista e mapa ---
+  function renderListaEMapa() {
+    const areaMin = parseFloat(document.getElementById('areaMin').value) || null;
+    const areaMax = parseFloat(document.getElementById('areaMax').value) || null;
+    const precoMin = parseFloat(document.getElementById('precoMin').value) || null;
+    const precoMax = parseFloat(document.getElementById('precoMax').value) || null;
+
+    const filtrados = IMOVEIS.filter(i => {
+      if (tiposAtivos.size > 0 && !tiposAtivos.has(i.tipo)) return false;
+      if (areaMin !== null && (i.area === undefined || i.area === null || i.area < areaMin)) return false;
+      if (areaMax !== null && (i.area === undefined || i.area === null || i.area > areaMax)) return false;
+      if (precoMin !== null && (i.preco === undefined || i.preco === null || i.preco < precoMin)) return false;
+      if (precoMax !== null && (i.preco === undefined || i.preco === null || i.preco > precoMax)) return false;
+      return true;
+    });
+
+    const ordem = document.getElementById('ordenarPor').value;
+    if (ordem === 'preco-asc') {
+      filtrados.sort((a, b) => (a.preco ?? Infinity) - (b.preco ?? Infinity));
+    } else if (ordem === 'preco-desc') {
+      filtrados.sort((a, b) => (b.preco ?? -Infinity) - (a.preco ?? -Infinity));
+    } else if (ordem === 'area-asc') {
+      filtrados.sort((a, b) => (a.area ?? Infinity) - (b.area ?? Infinity));
+    } else if (ordem === 'area-desc') {
+      filtrados.sort((a, b) => (b.area ?? -Infinity) - (a.area ?? -Infinity));
+    }
+
+    renderLista(filtrados);
+
+    // Recriar marcadores a partir do zero (a lista de imóveis muda a cada pesquisa)
+    Object.values(marcadores).forEach(m => mapa.removeLayer(m));
+    for (const id in marcadores) delete marcadores[id];
+
+    const comCoordenadas = filtrados.filter(i => i.lat && i.lng);
+    comCoordenadas.forEach(imovel => {
+      const marcador = L.marker([imovel.lat, imovel.lng], { icon: criarIconePin(false) });
+      marcador.bindPopup(`
+        <div class="popup-tipo">${imovel.tipoLabel}</div>
+        <div class="popup-titulo">${imovel.titulo}</div>
+        <div class="popup-preco">${imovel.precoLabel}</div>
+      `);
+      marcador.on('click', () => destacarCard(imovel.id));
+      marcadores[imovel.id] = marcador;
+      marcador.addTo(mapa);
+    });
+
+    if (comCoordenadas.length > 0) {
+      mapa.invalidateSize();
+      const grupo = L.featureGroup(Object.values(marcadores));
+      mapa.fitBounds(grupo.getBounds().pad(0.3), { maxZoom: 12 });
+    }
+
+    tituloResultados.textContent = `${filtrados.length} imóve${filtrados.length === 1 ? 'l' : 'is'} encontrado${filtrados.length === 1 ? '' : 's'}`;
+  }
+
+  // --- Inicialização ---
+  renderTags();
+  carregarFontes();
+  tituloResultados.textContent = 'Escolhe uma cidade e fontes, e pesquisa';
+</script>
+
+</body>
+</html>

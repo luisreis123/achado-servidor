@@ -32,7 +32,7 @@ from bs4 import BeautifulSoup
 
 logger = logging.getLogger("achado.supercasa")
 
-# tipo -> (segmento de categoria no URL, subpasta opcional)
+# tipo -> (segmento de categoria no URL, subpasta opcional) — usado quando HÁ cidade
 MAPA_TIPO = {
     "apartamento": ("casas", "com-apartamentos"),
     "moradia": ("casas", "com-moradias"),
@@ -40,6 +40,20 @@ MAPA_TIPO = {
     "escritorio": ("escritorios", None),
     "loja": ("espacos_comerciais_ou_armazens", None),
     "armazem": ("espacos_comerciais_ou_armazens", None),
+}
+
+# tipo -> plural — usado no esquema de URL NACIONAL (sem cidade), que é
+# uma estrutura diferente: supercasa.pt/{plural}-para-{venda|arrendar}
+# CONFIRMADO por inspeção real apenas para "apartamentos"; os restantes
+# são a melhor estimativa a partir do mesmo padrão — verificar antes de
+# confiar neles com regularidade.
+MAPA_TIPO_PLURAL_NACIONAL = {
+    "apartamento": "apartamentos",
+    "moradia": "moradias",
+    "terreno": "terrenos",
+    "escritorio": "escritorios",
+    "loja": "lojas",
+    "armazem": "armazens",
 }
 
 # Links de anúncio têm sempre o formato /algo-descritivo/i<numero>
@@ -50,12 +64,23 @@ PADRAO_AREA = re.compile(r'Área\s+(?:bruta|útil)\s+([\d,.]+)\s*m²')
 
 
 def construir_url_pesquisa(cidade: str, tipo: str, operacao: str) -> str | None:
+    cidade = (cidade or "").strip()
+
+    if not cidade:
+        # Esquema NACIONAL — confirmado real para apartamentos:
+        # supercasa.pt/apartamentos-para-venda (sem prefixo comprar-casas/cidade)
+        plural = MAPA_TIPO_PLURAL_NACIONAL.get(tipo)
+        if not plural:
+            return None
+        sufixo = "venda" if operacao == "venda" else "arrendar"
+        return f"https://supercasa.pt/{plural}-para-{sufixo}"
+
     categoria, subpasta = MAPA_TIPO.get(tipo, (None, None))
     if categoria is None:
         return None
 
     base = "comprar" if operacao == "venda" else "arrendar"
-    cidade_slug = cidade.strip().lower().replace(" ", "-")
+    cidade_slug = cidade.lower().replace(" ", "-")
 
     url = f"https://supercasa.pt/{base}-{categoria}/{cidade_slug}"
     if subpasta:
