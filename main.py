@@ -30,6 +30,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from bs4 import BeautifulSoup
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from playwright.async_api import async_playwright
 from pydantic import BaseModel
 
 import db
@@ -44,15 +45,43 @@ logger = logging.getLogger("achado")
 
 agendador = AsyncIOScheduler()
 
+# Instância partilhada do browser Playwright — criada uma vez no arranque
+# do servidor (ver ciclo_de_vida), reutilizada por todas as pesquisas.
+# É mais leve do que abrir/fechar um browser a cada pedido.
+_playwright_manager = None
+NAVEGADOR = None
+
 
 @asynccontextmanager
 async def ciclo_de_vida(app: FastAPI):
+    global _playwright_manager, NAVEGADOR
+
     db.inicializar()
     agendador.add_job(verificar_todos_os_alertas, "interval", minutes=30, id="verificar_alertas")
     agendador.start()
+
+    try:
+        _playwright_manager = await async_playwright().start()
+        NAVEGADOR = await _playwright_manager.chromium.launch(
+            headless=True,
+            args=["--disable-dev-shm-usage", "--no-sandbox", "--disable-gpu"],
+        )
+        logger.info("Browser Playwright (Chromium) iniciado com sucesso.")
+    except Exception as erro:
+        # Se o Playwright falhar a iniciar (ex: Chromium não instalado no
+        # ambiente), o servidor continua a funcionar, só sem scroll infinito
+        # — os adaptadores caem automaticamente para o método HTTP simples.
+        logger.warning(f"Não foi possível iniciar o Playwright: {erro}. A continuar sem ele.")
+        NAVEGADOR = None
+
     logger.info("Servidor iniciado — base de dados pronta, agendador de alertas a correr a cada 30 min.")
     yield
+
     agendador.shutdown()
+    if NAVEGADOR:
+        await NAVEGADOR.close()
+    if _playwright_manager:
+        await _playwright_manager.stop()
 
 
 app = FastAPI(title="Achado — pesquisa em tempo real", lifespan=ciclo_de_vida)
@@ -148,7 +177,7 @@ async def buscar_portal_real_json_ld(cliente: httpx.AsyncClient, cidade: str, ti
 
 async def _buscar_imovirtual_wrapper(cliente: httpx.AsyncClient, cidade: str, tipo: str, operacao: str) -> list[dict]:
     """Adapta a assinatura de buscar_imovirtual ao formato comum dos outros adaptadores."""
-    return await buscar_imovirtual(cliente, SEMAFORO, CABECALHOS, cidade, tipo, operacao)
+    return await buscar_imovirtual(cliente, SEMAFORO, CABECALHOS, cidade, tipo, operacao, browser=NAVEGADOR)
 
 
 async def _buscar_supercasa_wrapper(cliente: httpx.AsyncClient, cidade: str, tipo: str, operacao: str) -> list[dict]:

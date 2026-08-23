@@ -217,15 +217,30 @@ def extrair_imoveis_da_pagina_de_resultados(html: str, tipo: str, operacao: str)
     return resultados
 
 
-async def buscar_imovirtual(cliente: httpx.AsyncClient, semaforo, cabecalhos: dict, cidade: str, tipo: str, operacao: str) -> list[dict]:
+async def buscar_imovirtual(cliente: httpx.AsyncClient, semaforo, cabecalhos: dict, cidade: str, tipo: str, operacao: str, browser=None) -> list[dict]:
     """
-    Busca imóveis diretamente na página de listagem do Imovirtual — um
-    único pedido HTTP por pesquisa (mais rápido e mais leve para o site
-    de origem do que visitar cada anúncio individualmente).
+    Busca imóveis na página de listagem do Imovirtual.
+
+    Se um browser Playwright for fornecido, usa-o para fazer scroll e
+    carregar muitos mais resultados (o site usa scroll infinito via
+    JavaScript, sem URL de "página seguinte"). Sem browser, cai de volta
+    para um pedido HTTP simples — funciona, mas fica limitado à primeira
+    "fatia" de resultados (tipicamente ~36).
     """
     url_pesquisa = construir_url_pesquisa(cidade, tipo, operacao)
     if not url_pesquisa:
         return []
+
+    if browser is not None:
+        from playwright_fetch import obter_html_com_scroll
+        html = await obter_html_com_scroll(
+            browser,
+            url_pesquisa,
+            seletor_contagem='a[href*="/pt/anuncio/"]',
+        )
+        if html:
+            return extrair_imoveis_da_pagina_de_resultados(html, tipo, operacao)
+        logger.warning(f"[imovirtual] Playwright falhou em {url_pesquisa}, a tentar método HTTP simples como reserva.")
 
     try:
         async with semaforo:
