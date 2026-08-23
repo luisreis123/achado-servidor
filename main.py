@@ -37,6 +37,7 @@ import email_alertas
 import geocoding
 from adaptador_json_ld import buscar_via_json_ld
 from adaptador_imovirtual import buscar_imovirtual
+from adaptador_supercasa import buscar_supercasa
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("achado")
@@ -150,12 +151,18 @@ async def _buscar_imovirtual_wrapper(cliente: httpx.AsyncClient, cidade: str, ti
     return await buscar_imovirtual(cliente, SEMAFORO, CABECALHOS, cidade, tipo, operacao)
 
 
+async def _buscar_supercasa_wrapper(cliente: httpx.AsyncClient, cidade: str, tipo: str, operacao: str) -> list[dict]:
+    """Adapta a assinatura de buscar_supercasa ao formato comum dos outros adaptadores."""
+    return await buscar_supercasa(cliente, SEMAFORO, CABECALHOS, cidade, tipo, operacao)
+
+
 # Registo de fontes disponiveis: id -> (nome legivel, funcao adaptadora)
 FONTES_DISPONIVEIS = {
     "exemplo_portal_a": ("Portal A (exemplo)", buscar_exemplo_portal_a),
     "exemplo_portal_b": ("Portal B (exemplo)", buscar_exemplo_portal_b),
     "portal_real_exemplo": ("Portal real (por configurar)", buscar_portal_real_json_ld),
     "imovirtual": ("Imovirtual", _buscar_imovirtual_wrapper),
+    "supercasa": ("Supercasa", _buscar_supercasa_wrapper),
 }
 
 
