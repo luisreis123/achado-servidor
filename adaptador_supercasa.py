@@ -65,23 +65,28 @@ PADRAO_AREA = re.compile(r'Área\s+(?:bruta|útil)\s+([\d,.]+)\s*m²')
 
 def construir_url_pesquisa(cidade: str, tipo: str, operacao: str) -> str | None:
     cidade = (cidade or "").strip()
-
-    if not cidade:
-        # Esquema NACIONAL — confirmado real para apartamentos:
-        # supercasa.pt/apartamentos-para-venda (sem prefixo comprar-casas/cidade)
-        plural = MAPA_TIPO_PLURAL_NACIONAL.get(tipo)
-        if not plural:
-            return None
-        sufixo = "venda" if operacao == "venda" else "arrendar"
-        return f"https://supercasa.pt/{plural}-para-{sufixo}"
-
     categoria, subpasta = MAPA_TIPO.get(tipo, (None, None))
     if categoria is None:
         return None
 
     base = "comprar" if operacao == "venda" else "arrendar"
-    cidade_slug = cidade.lower().replace(" ", "-")
 
+    if not cidade:
+        if tipo in ("apartamento", "moradia"):
+            # CONFIRMADO real: apartamentos/moradias usam um esquema totalmente
+            # à parte a nível nacional (sem "comprar-casas", sem "com-")
+            plural = MAPA_TIPO_PLURAL_NACIONAL.get(tipo)
+            if not plural:
+                return None
+            sufixo = "venda" if operacao == "venda" else "arrendar"
+            return f"https://supercasa.pt/{plural}-para-{sufixo}"
+
+        # CONFIRMADO real para terrenos (supercasa.pt/comprar-terrenos existe
+        # e lista por distrito/região) — assume-se o mesmo padrão para as
+        # restantes categorias sem subpasta (escritórios, espaços comerciais)
+        return f"https://supercasa.pt/{base}-{categoria}"
+
+    cidade_slug = cidade.lower().replace(" ", "-")
     url = f"https://supercasa.pt/{base}-{categoria}/{cidade_slug}"
     if subpasta:
         url += f"/{subpasta}"
