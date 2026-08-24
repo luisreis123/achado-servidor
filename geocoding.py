@@ -32,7 +32,7 @@ CABECALHOS_NOMINATIM = {
 # NOVAS por pesquisa (as que já estão em cache não contam para este
 # limite). Evita que uma pesquisa com muitos resultados novos demore
 # minutos só a converter moradas em coordenadas.
-MAX_GEOCODING_NOVOS_POR_PESQUISA = 15
+MAX_GEOCODING_NOVOS_POR_PESQUISA = 8
 
 _semaforo_nominatim = asyncio.Semaphore(1)  # nunca mais do que 1 pedido em simultâneo
 
@@ -54,8 +54,23 @@ async def geocodificar(cliente: httpx.AsyncClient, endereco: str) -> tuple[float
                 headers=CABECALHOS_NOMINATIM,
                 timeout=10,
             )
-            # Respeita o limite de 1 pedido/segundo do Nominatim
-            await asyncio.sleep(1)
+
+            if resposta.status_code == 429:
+                # "Too many requests" — o Nominatim está a limitar-nos.
+                # Isto pode acontecer mesmo respeitando 1 pedido/segundo,
+                # porque o Render partilha IPs entre vários utilizadores
+                # e o limite pode ser sobre o IP todo, não só sobre nós.
+                # Não vale a pena insistir imediatamente — espera mais e desiste desta morada.
+                logger.warning(f"Nominatim respondeu 429 (limite atingido) para '{endereco}'")
+                await asyncio.sleep(3)
+                return None
+
+            if resposta.status_code != 200:
+                logger.warning(f"Nominatim respondeu {resposta.status_code} para '{endereco}'")
+                return None
+
+            # Respeita o limite de 1 pedido/segundo do Nominatim (com margem extra)
+            await asyncio.sleep(1.5)
 
         dados = resposta.json()
         if not dados:

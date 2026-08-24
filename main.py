@@ -99,7 +99,11 @@ app.add_middleware(
 SEMAFORO = asyncio.Semaphore(4)
 
 CABECALHOS = {
-    "User-Agent": "AchadoAgregadorBot/0.1 (uso pessoal; +http://localhost)"
+    # O User-Agent anterior identificava-se como "bot", o que o Supercasa
+    # começou a bloquear (403 Forbidden). Este é o mesmo tipo de
+    # cabeçalho que um browser normal envia.
+    "User-Agent": "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36",
+    "Accept-Language": "pt-PT,pt;q=0.9",
 }
 
 
