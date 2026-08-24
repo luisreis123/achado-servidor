@@ -32,12 +32,19 @@ async def obter_html_com_scroll(
     seletor_contagem: str,
     max_scrolls: int = 12,
     espera_entre_scrolls_ms: int = 1400,
+    verificar_suficiente=None,
 ) -> str | None:
     """
     Abre a URL num separador novo, tenta fechar o banner de cookies, e
     faz scroll repetidamente até o número de elementos que correspondem
     a `seletor_contagem` (ex: 'a[href*="/pt/anuncio/"]') deixar de
     aumentar — sinal de que já não há mais resultados a carregar.
+
+    Se `verificar_suficiente` for passado (uma função que recebe o HTML
+    atual e devolve True/False), o scroll também pode parar mais cedo
+    assim que essa função disser que já há resultados suficientes — útil
+    quando se está a filtrar por preço/área e não é preciso carregar
+    TUDO, só o que interessa.
 
     Devolve o HTML final (já com todo o conteúdo carregado), ou None se
     algo correu mal.
@@ -89,6 +96,15 @@ async def obter_html_com_scroll(
                     sem_crescimento_seguido = 0
 
                 contagem_anterior = contagem_atual
+
+                # Paragem antecipada: se já temos resultados suficientes que
+                # cumprem os filtros do utilizador, não vale a pena continuar
+                # a carregar mais (poupa tempo e não sobrecarrega o site à toa)
+                if verificar_suficiente is not None and i >= 2:
+                    html_atual = await pagina.content()
+                    if verificar_suficiente(html_atual):
+                        logger.info(f"Scroll parado ao fim de {i} tentativas — já há resultados suficientes que cumprem os filtros")
+                        return html_atual
 
                 await pagina.evaluate("window.scrollTo(0, document.body.scrollHeight)")
                 await asyncio.sleep(espera_entre_scrolls_ms / 1000)

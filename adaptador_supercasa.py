@@ -183,7 +183,22 @@ def extrair_imoveis_da_pagina_de_resultados(html: str, tipo: str, operacao: str)
     return resultados
 
 
-async def buscar_supercasa(cliente: httpx.AsyncClient, semaforo, cabecalhos: dict, cidade: str, tipo: str, operacao: str) -> list[dict]:
+def _cumpre_filtros(item: dict, preco_min, preco_max, area_min, area_max) -> bool:
+    if preco_min is not None and (item.get("preco") is None or item["preco"] < preco_min):
+        return False
+    if preco_max is not None and (item.get("preco") is None or item["preco"] > preco_max):
+        return False
+    if area_min is not None and (item.get("area_m2") is None or item["area_m2"] < area_min):
+        return False
+    if area_max is not None and (item.get("area_m2") is None or item["area_m2"] > area_max):
+        return False
+    return True
+
+
+async def buscar_supercasa(
+    cliente: httpx.AsyncClient, semaforo, cabecalhos: dict, cidade: str, tipo: str, operacao: str,
+    preco_min=None, preco_max=None, area_min=None, area_max=None,
+) -> list[dict]:
     url_pesquisa = construir_url_pesquisa(cidade, tipo, operacao)
     if not url_pesquisa:
         return []
@@ -198,4 +213,7 @@ async def buscar_supercasa(cliente: httpx.AsyncClient, semaforo, cabecalhos: dic
         logger.warning(f"[supercasa] falhou a obter listagem: {erro}")
         return []
 
-    return extrair_imoveis_da_pagina_de_resultados(resposta.text, tipo, operacao)
+    itens = extrair_imoveis_da_pagina_de_resultados(resposta.text, tipo, operacao)
+    if any(v is not None for v in (preco_min, preco_max, area_min, area_max)):
+        itens = [i for i in itens if _cumpre_filtros(i, preco_min, preco_max, area_min, area_max)]
+    return itens

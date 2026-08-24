@@ -22,6 +22,8 @@ Variáveis de ambiente opcionais (para os alertas por email funcionarem):
 import asyncio
 import hashlib
 import logging
+import time
+import uuid
 from contextlib import asynccontextmanager
 from typing import Optional
 
@@ -179,21 +181,41 @@ async def buscar_portal_real_json_ld(cliente: httpx.AsyncClient, cidade: str, ti
     return await buscar_via_json_ld(cliente, SEMAFORO, CABECALHOS, fonte, url, tipo, operacao)
 
 
-async def _buscar_imovirtual_wrapper(cliente: httpx.AsyncClient, cidade: str, tipo: str, operacao: str) -> list[dict]:
+async def _buscar_imovirtual_wrapper(cliente: httpx.AsyncClient, cidade: str, tipo: str, operacao: str, filtros: dict) -> list[dict]:
     """Adapta a assinatura de buscar_imovirtual ao formato comum dos outros adaptadores."""
-    return await buscar_imovirtual(cliente, SEMAFORO, CABECALHOS, cidade, tipo, operacao, browser=NAVEGADOR)
+    return await buscar_imovirtual(
+        cliente, SEMAFORO, CABECALHOS, cidade, tipo, operacao, browser=NAVEGADOR,
+        preco_min=filtros.get("preco_min"), preco_max=filtros.get("preco_max"),
+        area_min=filtros.get("area_min"), area_max=filtros.get("area_max"),
+    )
 
 
-async def _buscar_supercasa_wrapper(cliente: httpx.AsyncClient, cidade: str, tipo: str, operacao: str) -> list[dict]:
+async def _buscar_supercasa_wrapper(cliente: httpx.AsyncClient, cidade: str, tipo: str, operacao: str, filtros: dict) -> list[dict]:
     """Adapta a assinatura de buscar_supercasa ao formato comum dos outros adaptadores."""
-    return await buscar_supercasa(cliente, SEMAFORO, CABECALHOS, cidade, tipo, operacao)
+    return await buscar_supercasa(
+        cliente, SEMAFORO, CABECALHOS, cidade, tipo, operacao,
+        preco_min=filtros.get("preco_min"), preco_max=filtros.get("preco_max"),
+        area_min=filtros.get("area_min"), area_max=filtros.get("area_max"),
+    )
+
+
+async def _buscar_exemplo_a_wrapper(cliente, cidade, tipo, operacao, filtros):
+    return await buscar_exemplo_portal_a(cliente, cidade, tipo, operacao)
+
+
+async def _buscar_exemplo_b_wrapper(cliente, cidade, tipo, operacao, filtros):
+    return await buscar_exemplo_portal_b(cliente, cidade, tipo, operacao)
+
+
+async def _buscar_portal_real_wrapper(cliente, cidade, tipo, operacao, filtros):
+    return await buscar_portal_real_json_ld(cliente, cidade, tipo, operacao)
 
 
 # Registo de fontes disponiveis: id -> (nome legivel, funcao adaptadora)
 FONTES_DISPONIVEIS = {
-    "exemplo_portal_a": ("Portal A (exemplo)", buscar_exemplo_portal_a),
-    "exemplo_portal_b": ("Portal B (exemplo)", buscar_exemplo_portal_b),
-    "portal_real_exemplo": ("Portal real (por configurar)", buscar_portal_real_json_ld),
+    "exemplo_portal_a": ("Portal A (exemplo)", _buscar_exemplo_a_wrapper),
+    "exemplo_portal_b": ("Portal B (exemplo)", _buscar_exemplo_b_wrapper),
+    "portal_real_exemplo": ("Portal real (por configurar)", _buscar_portal_real_wrapper),
     "imovirtual": ("Imovirtual", _buscar_imovirtual_wrapper),
     "supercasa": ("Supercasa", _buscar_supercasa_wrapper),
 }
@@ -274,26 +296,61 @@ def _agrupar_duplicados(items: list[dict]) -> list[dict]:
 # Lógica de pesquisa reutilizável (usada pelo endpoint /pesquisar e pelos alertas)
 # ---------------------------------------------------------------------------
 
-async def executar_pesquisa(cidade: str, tipos_lista: list[str], operacao: str, fontes_pedidas: list[str]) -> list[dict]:
+# Estado das pesquisas em curso, para o frontend poder consultar o progresso.
+# É só em memória (não sobrevive a reinícios do servidor) — não há problema,
+# é informação transitória, só interessa enquanto a pesquisa está a decorrer.
+ESTADO_PESQUISAS: dict[str, dict] = {}
+
+
+async def executar_pesquisa(
+    cidade: str, tipos_lista: list[str], operacao: str, fontes_pedidas: list[str],
+    filtros: dict | None = None, pesquisa_id: str | None = None,
+) -> list[dict]:
+    filtros = filtros or {}
     tarefas = []
+
     async with httpx.AsyncClient() as cliente:
         for fonte_id in fontes_pedidas:
             if fonte_id not in FONTES_DISPONIVEIS:
                 continue
             _, funcao = FONTES_DISPONIVEIS[fonte_id]
             for tipo in tipos_lista:
-                tarefas.append(funcao(cliente, cidade, tipo, operacao))
+                tarefas.append((fonte_id, funcao(cliente, cidade, tipo, operacao, filtros)))
 
-        resultados_por_fonte = await asyncio.gather(*tarefas, return_exceptions=True)
+        todos_items = []
 
-    todos_items = []
-    for resultado in resultados_por_fonte:
-        if isinstance(resultado, Exception):
-            logger.warning(f"Uma fonte falhou: {resultado}")
-            continue
-        todos_items.extend(resultado)
+        if pesquisa_id and pesquisa_id in ESTADO_PESQUISAS:
+            # Modo com acompanhamento: processa à medida que cada combinação
+            # fonte×tipo termina, atualizando o progresso e a contagem por
+            # portal em tempo real (em vez de esperar que tudo termine de vez)
+            async def _tarefa_com_fonte(fonte_id, corrotina):
+                try:
+                    resultado = await corrotina
+                except Exception as erro:
+                    logger.warning(f"Fonte {fonte_id} falhou: {erro}")
+                    resultado = []
+                return fonte_id, resultado
+
+            tarefas_envolvidas = [_tarefa_com_fonte(fonte_id, coro) for fonte_id, coro in tarefas]
+
+            for tarefa_concluida in asyncio.as_completed(tarefas_envolvidas):
+                fonte_id, resultado = await tarefa_concluida
+                todos_items.extend(resultado)
+                estado = ESTADO_PESQUISAS[pesquisa_id]
+                estado["concluidas"] += 1
+                estado["por_fonte"][fonte_id] = estado["por_fonte"].get(fonte_id, 0) + len(resultado)
+        else:
+            resultados_por_fonte = await asyncio.gather(*(t for _, t in tarefas), return_exceptions=True)
+            for resultado in resultados_por_fonte:
+                if isinstance(resultado, Exception):
+                    logger.warning(f"Uma fonte falhou: {resultado}")
+                    continue
+                todos_items.extend(resultado)
 
     agrupados = _agrupar_duplicados(todos_items)
+
+    if pesquisa_id and pesquisa_id in ESTADO_PESQUISAS:
+        ESTADO_PESQUISAS[pesquisa_id]["fase"] = "a calcular localizações"
 
     # Converte as moradas em coordenadas para os pinos no mapa
     # (usa cache — só faz pedidos novos ao Nominatim para moradas nunca vistas)
@@ -309,8 +366,97 @@ async def executar_pesquisa(cidade: str, tipos_lista: list[str], operacao: str, 
     return agrupados
 
 
+def _extrair_filtros(preco_min, preco_max, area_min, area_max) -> dict:
+    return {
+        "preco_min": preco_min,
+        "preco_max": preco_max,
+        "area_min": area_min,
+        "area_max": area_max,
+    }
+
+
+def _limpar_pesquisas_antigas():
+    """Remove estados de pesquisas com mais de 15 minutos, para não acumular indefinidamente."""
+    agora = time.time()
+    for pid in list(ESTADO_PESQUISAS.keys()):
+        if agora - ESTADO_PESQUISAS[pid].get("criado_em", 0) > 900:
+            del ESTADO_PESQUISAS[pid]
+
+
 # ---------------------------------------------------------------------------
-# Endpoint principal
+# Endpoints de pesquisa — com acompanhamento de progresso
+# ---------------------------------------------------------------------------
+
+@app.post("/pesquisar/iniciar")
+async def iniciar_pesquisa(
+    cidade: str = Query("", description="Cidade ou area, ex: Lisboa. Vazio = todo o país."),
+    tipos: str = Query("", description="Tipos separados por virgula, ex: apartamento,terreno"),
+    operacao: str = Query("venda", description="venda | arrendamento"),
+    fontes: str = Query("", description="IDs de fontes separadas por virgula. Vazio = todas."),
+    preco_min: float | None = Query(None),
+    preco_max: float | None = Query(None),
+    area_min: float | None = Query(None),
+    area_max: float | None = Query(None),
+):
+    """Começa uma pesquisa em segundo plano e devolve um ID para acompanhar o progresso."""
+    _limpar_pesquisas_antigas()
+
+    tipos_lista = [t for t in tipos.split(",") if t] or ["apartamento", "moradia", "terreno"]
+    fontes_pedidas = [f for f in fontes.split(",") if f] or list(FONTES_DISPONIVEIS.keys())
+    filtros = _extrair_filtros(preco_min, preco_max, area_min, area_max)
+
+    pesquisa_id = str(uuid.uuid4())
+    ESTADO_PESQUISAS[pesquisa_id] = {
+        "criado_em": time.time(),
+        "total": len(tipos_lista) * len(fontes_pedidas),
+        "concluidas": 0,
+        "por_fonte": {f: 0 for f in fontes_pedidas},
+        "fase": "a pesquisar",
+        "pronto": False,
+        "resultados": None,
+    }
+
+    async def _correr():
+        try:
+            resultados = await executar_pesquisa(cidade, tipos_lista, operacao, fontes_pedidas, filtros, pesquisa_id)
+            ESTADO_PESQUISAS[pesquisa_id]["resultados"] = resultados
+            ESTADO_PESQUISAS[pesquisa_id]["fase"] = "concluído"
+        except Exception as erro:
+            logger.warning(f"Pesquisa {pesquisa_id} falhou: {erro}")
+            ESTADO_PESQUISAS[pesquisa_id]["resultados"] = []
+            ESTADO_PESQUISAS[pesquisa_id]["fase"] = f"erro: {erro}"
+        finally:
+            ESTADO_PESQUISAS[pesquisa_id]["pronto"] = True
+
+    asyncio.create_task(_correr())
+    return {"id": pesquisa_id}
+
+
+@app.get("/pesquisar/estado/{pesquisa_id}")
+async def estado_pesquisa(pesquisa_id: str):
+    """Consultado repetidamente pelo frontend para mostrar a barra de progresso."""
+    estado = ESTADO_PESQUISAS.get(pesquisa_id)
+    if not estado:
+        raise HTTPException(status_code=404, detail="Pesquisa não encontrada (pode ter expirado).")
+
+    percentagem = round((estado["concluidas"] / estado["total"]) * 100) if estado["total"] else 100
+    resposta = {
+        "percentagem": min(percentagem, 99) if not estado["pronto"] else 100,
+        "fase": estado["fase"],
+        "por_fonte": estado["por_fonte"],
+        "pronto": estado["pronto"],
+    }
+
+    if estado["pronto"]:
+        resultados = estado["resultados"] or []
+        resposta["total"] = len(resultados)
+        resposta["resultados"] = resultados
+
+    return resposta
+
+
+# ---------------------------------------------------------------------------
+# Endpoint antigo (sem acompanhamento) — mantido para os alertas por email
 # ---------------------------------------------------------------------------
 
 @app.get("/pesquisar")
@@ -319,11 +465,16 @@ async def pesquisar(
     tipos: str = Query("", description="Tipos separados por virgula, ex: apartamento,terreno"),
     operacao: str = Query("venda", description="venda | arrendamento"),
     fontes: str = Query("", description="IDs de fontes separadas por virgula. Vazio = todas."),
+    preco_min: float | None = Query(None),
+    preco_max: float | None = Query(None),
+    area_min: float | None = Query(None),
+    area_max: float | None = Query(None),
 ):
     tipos_lista = [t for t in tipos.split(",") if t] or ["apartamento", "moradia", "terreno"]
     fontes_pedidas = [f for f in fontes.split(",") if f] or list(FONTES_DISPONIVEIS.keys())
+    filtros = _extrair_filtros(preco_min, preco_max, area_min, area_max)
 
-    agrupados = await executar_pesquisa(cidade, tipos_lista, operacao, fontes_pedidas)
+    agrupados = await executar_pesquisa(cidade, tipos_lista, operacao, fontes_pedidas, filtros)
 
     return {
         "total": len(agrupados),

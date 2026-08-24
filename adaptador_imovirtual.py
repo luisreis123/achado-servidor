@@ -217,19 +217,43 @@ def extrair_imoveis_da_pagina_de_resultados(html: str, tipo: str, operacao: str)
     return resultados
 
 
-async def buscar_imovirtual(cliente: httpx.AsyncClient, semaforo, cabecalhos: dict, cidade: str, tipo: str, operacao: str, browser=None) -> list[dict]:
+def _cumpre_filtros(item: dict, preco_min, preco_max, area_min, area_max) -> bool:
+    if preco_min is not None and (item.get("preco") is None or item["preco"] < preco_min):
+        return False
+    if preco_max is not None and (item.get("preco") is None or item["preco"] > preco_max):
+        return False
+    if area_min is not None and (item.get("area_m2") is None or item["area_m2"] < area_min):
+        return False
+    if area_max is not None and (item.get("area_m2") is None or item["area_m2"] > area_max):
+        return False
+    return True
+
+
+async def buscar_imovirtual(
+    cliente: httpx.AsyncClient, semaforo, cabecalhos: dict, cidade: str, tipo: str, operacao: str,
+    browser=None, preco_min=None, preco_max=None, area_min=None, area_max=None,
+) -> list[dict]:
     """
     Busca imóveis na página de listagem do Imovirtual.
 
     Se um browser Playwright for fornecido, usa-o para fazer scroll e
-    carregar muitos mais resultados (o site usa scroll infinito via
-    JavaScript, sem URL de "página seguinte"). Sem browser, cai de volta
-    para um pedido HTTP simples — funciona, mas fica limitado à primeira
-    "fatia" de resultados (tipicamente ~36).
+    carregar muitos mais resultados. Se além disso houver filtros de
+    preço/área, o scroll para mais cedo assim que já houver ~20
+    resultados que cumprem esses filtros — não vale a pena carregar
+    tudo se só interessa uma fatia.
     """
     url_pesquisa = construir_url_pesquisa(cidade, tipo, operacao)
     if not url_pesquisa:
         return []
+
+    tem_filtros = any(v is not None for v in (preco_min, preco_max, area_min, area_max))
+
+    def _verificar_suficiente(html: str) -> bool:
+        if not tem_filtros:
+            return False
+        itens = extrair_imoveis_da_pagina_de_resultados(html, tipo, operacao)
+        encontrados = [i for i in itens if _cumpre_filtros(i, preco_min, preco_max, area_min, area_max)]
+        return len(encontrados) >= 20
 
     if browser is not None:
         from playwright_fetch import obter_html_com_scroll
@@ -237,9 +261,13 @@ async def buscar_imovirtual(cliente: httpx.AsyncClient, semaforo, cabecalhos: di
             browser,
             url_pesquisa,
             seletor_contagem='a[href*="/pt/anuncio/"]',
+            verificar_suficiente=_verificar_suficiente if tem_filtros else None,
         )
         if html:
-            return extrair_imoveis_da_pagina_de_resultados(html, tipo, operacao)
+            itens = extrair_imoveis_da_pagina_de_resultados(html, tipo, operacao)
+            if tem_filtros:
+                itens = [i for i in itens if _cumpre_filtros(i, preco_min, preco_max, area_min, area_max)]
+            return itens
         logger.warning(f"[imovirtual] Playwright falhou em {url_pesquisa}, a tentar método HTTP simples como reserva.")
 
     try:
@@ -252,5 +280,8 @@ async def buscar_imovirtual(cliente: httpx.AsyncClient, semaforo, cabecalhos: di
         logger.warning(f"[imovirtual] falhou a obter listagem: {erro}")
         return []
 
-    return extrair_imoveis_da_pagina_de_resultados(resposta.text, tipo, operacao)
+    itens = extrair_imoveis_da_pagina_de_resultados(resposta.text, tipo, operacao)
+    if tem_filtros:
+        itens = [i for i in itens if _cumpre_filtros(i, preco_min, preco_max, area_min, area_max)]
+    return itens
 

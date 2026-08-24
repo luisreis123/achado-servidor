@@ -359,6 +359,29 @@
     font-size: 13px;
   }
 
+  .barra-progresso {
+    width: 100%;
+    max-width: 320px;
+    height: 6px;
+    background: var(--ink-2);
+    border: 1px solid var(--linha);
+    margin: 0 auto 18px;
+    overflow: hidden;
+    border-radius: 3px;
+  }
+
+  .barra-progresso-preenchimento {
+    width: 40%;
+    height: 100%;
+    background: linear-gradient(90deg, var(--azulejo), var(--ocre));
+    animation: deslizar-progresso 1.4s ease-in-out infinite;
+  }
+
+  @keyframes deslizar-progresso {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(350%); }
+  }
+
   .painel-historico {
     font-family: 'IBM Plex Mono', monospace;
     font-size: 12px;
@@ -437,6 +460,7 @@
 
   @media (prefers-reduced-motion: reduce) {
     * { transition: none !important; }
+    .barra-progresso-preenchimento { animation: none !important; width: 100%; }
   }
 </style>
 </head>
@@ -682,6 +706,7 @@
         const btn = document.createElement('button');
         btn.className = 'tag';
         btn.setAttribute('type', 'button');
+        btn.setAttribute('data-id', f.id);
         btn.textContent = f.nome;
         btn.addEventListener('click', () => {
           fontesAtivas.has(f.id) ? fontesAtivas.delete(f.id) : fontesAtivas.add(f.id);
@@ -701,21 +726,84 @@
     }
   }
 
-  // --- Disparar uma pesquisa real ao servidor ---
+  // --- Disparar uma pesquisa real ao servidor, com acompanhamento de progresso ---
+  let intervaloProgresso = null;
+
+  function renderizarProgresso(percentagem, fase, porFonte) {
+    const container = document.getElementById('progressoContainer');
+    if (!container) return;
+
+    const linhasFontes = Object.entries(porFonte || {})
+      .map(([id, contagem]) => {
+        const nomeFonte = document.querySelector(`#fontesContainer button[data-id="${id}"]`)?.textContent || id;
+        return `<span style="margin-right: 14px;">${nomeFonte}: <strong style="color: var(--marfim);">${contagem}</strong></span>`;
+      })
+      .join('');
+
+    container.innerHTML = `
+      <div class="barra-progresso"><div class="barra-progresso-preenchimento" style="width: ${percentagem}%; animation: none;"></div></div>
+      <div id="progressoTexto">${fase} — ${percentagem}%</div>
+      <div style="margin-top: 10px; font-size: 11px;">${linhasFontes}</div>
+    `;
+  }
+
   async function pesquisar() {
     const cidade = document.getElementById('cidade').value.trim();
     const operacao = document.getElementById('operacao').value === 'Arrendar' ? 'arrendamento' : 'venda';
     const tiposQuery = Array.from(tiposAtivos).join(',');
     const fontesQuery = Array.from(fontesAtivas).join(',');
+    const areaMin = document.getElementById('areaMin').value;
+    const areaMax = document.getElementById('areaMax').value;
+    const precoMin = document.getElementById('precoMin').value;
+    const precoMax = document.getElementById('precoMax').value;
 
     btnPesquisar.textContent = 'A pesquisar...';
     btnPesquisar.disabled = true;
-    listaContainer.innerHTML = '<div class="sem-resultados">A consultar as fontes selecionadas — pode demorar alguns segundos...</div>';
+
+    listaContainer.innerHTML = `<div class="sem-resultados"><div id="progressoContainer"></div></div>`;
+    renderizarProgresso(0, 'A começar...', {});
 
     try {
-      const url = `${SERVIDOR_URL}/pesquisar?cidade=${encodeURIComponent(cidade)}&tipos=${tiposQuery}&operacao=${operacao}&fontes=${fontesQuery}`;
-      const resposta = await fetch(url, { signal: AbortSignal.timeout(30000) });
-      const dados = await resposta.json();
+      const parametros = new URLSearchParams({
+        cidade, operacao, tipos: tiposQuery, fontes: fontesQuery,
+      });
+      if (areaMin) parametros.set('area_min', areaMin);
+      if (areaMax) parametros.set('area_max', areaMax);
+      if (precoMin) parametros.set('preco_min', precoMin);
+      if (precoMax) parametros.set('preco_max', precoMax);
+
+      const respostaInicio = await fetch(`${SERVIDOR_URL}/pesquisar/iniciar?${parametros}`, {
+        method: 'POST',
+        signal: AbortSignal.timeout(15000),
+      });
+      const { id } = await respostaInicio.json();
+
+      // Consultar o progresso a cada segundo até a pesquisa terminar
+      const dados = await new Promise((resolve, reject) => {
+        intervaloProgresso = setInterval(async () => {
+          try {
+            const respostaEstado = await fetch(`${SERVIDOR_URL}/pesquisar/estado/${id}`);
+            const estado = await respostaEstado.json();
+
+            renderizarProgresso(estado.percentagem, estado.fase, estado.por_fonte);
+
+            if (estado.pronto) {
+              clearInterval(intervaloProgresso);
+              resolve(estado);
+            }
+          } catch (erroPoll) {
+            clearInterval(intervaloProgresso);
+            reject(erroPoll);
+          }
+        }, 1000);
+
+        // Limite de segurança: desiste ao fim de 3 minutos, mesmo que o
+        // servidor continue a trabalhar (evita ficar preso para sempre)
+        setTimeout(() => {
+          clearInterval(intervaloProgresso);
+          reject(new Error('timeout'));
+        }, 180000);
+      });
 
       IMOVEIS = (dados.resultados || []).map((r, i) => ({
         id: i,
@@ -739,10 +827,11 @@
     } catch (erro) {
       listaContainer.innerHTML = `
         <div class="sem-resultados">
-          A pesquisa falhou ou demorou demasiado tempo.<br>
-          Verifica se o servidor local está a correr e tenta novamente.
+          A pesquisa falhou ou demorou demasiado tempo (mais de 3 minutos).<br>
+          Verifica se o servidor está ligado e tenta novamente.
         </div>`;
     } finally {
+      clearInterval(intervaloProgresso);
       btnPesquisar.textContent = 'Pesquisar';
       btnPesquisar.disabled = false;
     }
