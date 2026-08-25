@@ -20,10 +20,11 @@ logger = logging.getLogger("achado.playwright")
 # o banner, que de outra forma pode bloquear cliques/scroll na página)
 TEXTOS_ACEITAR_COOKIES = ["Aceitar", "Aceitar todos", "Aceito", "Concordo", "Accept all", "Accept"]
 
-# O plano gratuito do Render tem pouca CPU/RAM — correr duas páginas
-# Playwright em simultâneo pode fazer com que ambas fiquem lentas de mais
-# e atinjam o tempo limite. Por isso, no máximo 1 de cada vez.
-_semaforo_playwright = asyncio.Semaphore(1)
+# O plano gratuito do Render tem pouca CPU/RAM — mas serializar tudo
+# para 1 só faz o tempo total disparar quando há vários tipos
+# selecionados (cada um espera pelo anterior). 2 em simultâneo é um
+# equilíbrio razoável, com as imagens já bloqueadas para poupar memória.
+_semaforo_playwright = asyncio.Semaphore(2)
 
 
 async def obter_html_com_scroll(

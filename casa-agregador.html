@@ -653,15 +653,16 @@
     { valor: 'armazem', label: 'Armazém' },
   ];
 
-  // --- Renderizar as tags de tipo (multi-seleção) ---
+  // --- Renderizar as tags de tipo (multi-seleção), com contagem de resultados ---
   function renderTags() {
     tiposContainer.innerHTML = '';
     TIPOS_DISPONIVEIS.forEach(t => {
+      const contagem = IMOVEIS.filter(i => i.tipo === t.valor).length;
       const btn = document.createElement('button');
       btn.className = 'tag' + (tiposAtivos.has(t.valor) ? ' ativo' : '');
       btn.setAttribute('type', 'button');
       btn.setAttribute('aria-pressed', tiposAtivos.has(t.valor));
-      btn.textContent = t.label;
+      btn.textContent = contagem > 0 ? `${t.label} (${contagem})` : t.label;
       btn.addEventListener('click', () => {
         tiposAtivos.has(t.valor) ? tiposAtivos.delete(t.valor) : tiposAtivos.add(t.valor);
         renderTags();
@@ -676,6 +677,16 @@
     renderTags();
     renderListaEMapa();
   });
+
+  // --- Atualizar as tags de fonte com a contagem de resultados de cada portal ---
+  function atualizarContagemFontes() {
+    document.querySelectorAll('#fontesContainer button[data-id]').forEach(btn => {
+      const id = btn.getAttribute('data-id');
+      const nomeBase = btn.getAttribute('data-nome-base') || btn.textContent;
+      const contagem = IMOVEIS.filter(i => (i.fontesOrigem || []).includes(id)).length;
+      btn.textContent = contagem > 0 ? `${nomeBase} (${contagem})` : nomeBase;
+    });
+  }
 
   // --- Filtros de área e preço (De/Até) — aplicados localmente, sem nova pesquisa ---
   ['areaMin', 'areaMax', 'precoMin', 'precoMax'].forEach(id => {
@@ -707,6 +718,7 @@
         btn.className = 'tag';
         btn.setAttribute('type', 'button');
         btn.setAttribute('data-id', f.id);
+        btn.setAttribute('data-nome-base', f.nome);
         btn.textContent = f.nome;
         btn.addEventListener('click', () => {
           fontesAtivas.has(f.id) ? fontesAtivas.delete(f.id) : fontesAtivas.add(f.id);
@@ -778,31 +790,62 @@
       });
       const { id } = await respostaInicio.json();
 
-      // Consultar o progresso a cada segundo até a pesquisa terminar
+      // Consultar o progresso a cada segundo até a pesquisa terminar.
+      // Em vez de um limite de tempo fixo (que desistia mesmo quando o
+      // servidor continuava a trabalhar em pesquisas com vários tipos),
+      // só desistimos se a percentagem PARAR de avançar durante muito
+      // tempo — assim, uma pesquisa lenta mas que está mesmo a progredir
+      // nunca é interrompida à força.
       const dados = await new Promise((resolve, reject) => {
+        let ultimaPercentagem = -1;
+        let ultimaFase = '';
+        let ultimasContagens = '';
+        let segundosSemProgresso = 0;
+        const LIMITE_SEM_PROGRESSO_SEGUNDOS = 120;
+        const LIMITE_ABSOLUTO_SEGUNDOS = 600; // rede de segurança final: 10 min
+        let segundosTotais = 0;
+
         intervaloProgresso = setInterval(async () => {
+          segundosTotais++;
+
           try {
             const respostaEstado = await fetch(`${SERVIDOR_URL}/pesquisar/estado/${id}`);
             const estado = await respostaEstado.json();
 
             renderizarProgresso(estado.percentagem, estado.fase, estado.por_fonte);
 
+            const contagensAtuais = JSON.stringify(estado.por_fonte || {});
+            const houveProgresso = estado.percentagem > ultimaPercentagem || estado.fase !== ultimaFase || contagensAtuais !== ultimasContagens;
+            if (houveProgresso) {
+              ultimaPercentagem = estado.percentagem;
+              ultimaFase = estado.fase;
+              ultimasContagens = contagensAtuais;
+              segundosSemProgresso = 0;
+            } else {
+              segundosSemProgresso++;
+            }
+
             if (estado.pronto) {
               clearInterval(intervaloProgresso);
               resolve(estado);
+              return;
+            }
+
+            if (segundosSemProgresso >= LIMITE_SEM_PROGRESSO_SEGUNDOS) {
+              clearInterval(intervaloProgresso);
+              reject(new Error('sem_progresso'));
+              return;
+            }
+
+            if (segundosTotais >= LIMITE_ABSOLUTO_SEGUNDOS) {
+              clearInterval(intervaloProgresso);
+              reject(new Error('limite_absoluto'));
             }
           } catch (erroPoll) {
             clearInterval(intervaloProgresso);
             reject(erroPoll);
           }
         }, 1000);
-
-        // Limite de segurança: desiste ao fim de 3 minutos, mesmo que o
-        // servidor continue a trabalhar (evita ficar preso para sempre)
-        setTimeout(() => {
-          clearInterval(intervaloProgresso);
-          reject(new Error('timeout'));
-        }, 180000);
       });
 
       IMOVEIS = (dados.resultados || []).map((r, i) => ({
@@ -818,18 +861,23 @@
         preco: r.preco,
         precoLabel: r.preco ? `${r.preco.toLocaleString('pt-PT')} €` : '—',
         fontes: r._fontes ? r._fontes.length : 1,
+        fontesOrigem: r._fontes || (r.fonte ? [r.fonte] : []),
         foto: r.thumbnail_url || null,
         urlOriginal: r.url_original,
         hash: r._hash,
       }));
 
+      renderTags();
+      atualizarContagemFontes();
       renderListaEMapa();
     } catch (erro) {
-      listaContainer.innerHTML = `
-        <div class="sem-resultados">
-          A pesquisa falhou ou demorou demasiado tempo (mais de 3 minutos).<br>
-          Verifica se o servidor está ligado e tenta novamente.
-        </div>`;
+      let mensagem = 'A pesquisa falhou. Verifica se o servidor está ligado e tenta novamente.';
+      if (erro.message === 'sem_progresso') {
+        mensagem = 'A pesquisa parou de avançar durante 2 minutos — pode ter encravado numa das fontes. Tenta novamente, talvez com menos tipos/fontes de cada vez.';
+      } else if (erro.message === 'limite_absoluto') {
+        mensagem = 'A pesquisa está a demorar demasiado (mais de 10 minutos), mesmo continuando a avançar. Experimenta reduzir os tipos ou fontes selecionadas.';
+      }
+      listaContainer.innerHTML = `<div class="sem-resultados">${mensagem}</div>`;
     } finally {
       clearInterval(intervaloProgresso);
       btnPesquisar.textContent = 'Pesquisar';
